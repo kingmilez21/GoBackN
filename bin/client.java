@@ -6,11 +6,13 @@ import java.nio.file.Files;
 
 import java.nio.file.Paths;
 
+import com.ibm.rmi.util.buffer.ByteBuffer;
+
 import java.nio.file.Path;
 
 
 
-class sender {
+class client {
 
 	//init
 
@@ -26,7 +28,9 @@ class sender {
 
 	static int udp_data = 0;
 
+	private final int maxDataLength = 500;
 
+	private final int SeqNumModulo = 32;
 
 	static String filename = null;
 
@@ -37,6 +41,42 @@ class sender {
 
 
 	static int acked = 0;
+
+	public byte[] getUDPdata() {
+
+		ByteBuffer buffer = ByteBuffer.allocate(512);
+
+		buffer.putInt(packet.type);
+
+        buffer.putInt(seqnum);
+
+        buffer.putInt(data.length());
+
+        buffer.put(data.getBytes(),0,data.length());
+
+		return buffer.array();
+
+	}
+
+	
+
+	public static packet parseUDPdata(byte[] UDPdata) throws Exception {
+
+		ByteBuffer buffer = ByteBuffer.wrap(UDPdata);
+
+		int type = buffer.getInt();
+
+		int seqnum = buffer.getInt();
+
+		int length = buffer.getInt();
+
+		byte data[] = new byte[length];
+
+		buffer.get(data, 0, length);
+
+		return new packet(type, seqnum, new String(data));
+
+	}
 
 	//check the string whether include letter
 
