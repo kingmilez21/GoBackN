@@ -1,339 +1,211 @@
-//==============================================================================
+import java.io.*; 
 
-// The Go-Back-N Protocol
+import java.net.*; 
 
-//
+class server {
 
-// @description: An implementation of a receiver program in Java
 
-// @author: Elisha Lai
 
-// @version: 1.0 01/11/2016
+	//init
 
-//==============================================================================
+	static String hostname = null;
 
+	static String udp_acks = null;
 
+	static String udp_datas = null;
 
-import java.io.FileWriter;
 
-import java.io.BufferedWriter;
 
-import java.util.Timer;
+	static int udp_ack = 0;
 
-import java.net.DatagramSocket;
+	static int udp_data = 0;
 
 
 
-public class server {
+	static String filename = null;
 
-   public static void main(String[] args) throws Exception {
 
-      // Checks the number and formats of the command line arguments passed
 
-      checkCommandLineArguments(args);
+	//check the string whether include letter
 
- 
+	public static boolean isInteger( String input ){//function to check whether a string is all numbers
 
-      String emulatorAddress = args[0];
+	    try{
 
-      int emulatorPort = Integer.parseInt(args[1]);
+	      Integer.parseInt(input);
 
-      int receiverPort = Integer.parseInt(args[2]);
+	      return true;
 
-      String fileName = args[3];
+	    }
 
+	    catch(Exception e){
 
+	      return false;
 
-      // Stores the expected sequence number of the next packet to be
+	    }
 
-      // received
+	}
 
-      int expectedSeqNum = 0;
+	//receive
 
-      
+	public static void doreceiver() throws Exception {
 
-      // Creates the file writer and arrival log writer
 
-      BufferedWriter fileWriter =
 
-         new BufferedWriter(new FileWriter(fileName));
+		//socket and datagram init
 
-      BufferedWriter arrivalLogWriter =
+		byte[] receiveData = new byte[1024];//buffer recived data
 
-         new BufferedWriter(new FileWriter("arrival.log"));
+	
 
+		DatagramSocket sendSOC = new DatagramSocket();//send ack socket
 
+		DatagramSocket receiveSOC = new DatagramSocket(udp_data);//receive data socket
 
-      // Creates the receiver socket
 
-      DatagramSocket receiverSocket = new DatagramSocket(receiverPort);
 
+		PrintWriter file = new PrintWriter(filename);//creat the file name as filenmae which is the paramerter
 
+		PrintWriter log = new PrintWriter("arrival.log");//creat the file arrival.log to save the seqNUM
 
-      // Receives packets from the emulator until an EOT packet is received
 
-      while (true) {
 
-         // Creates a packet to receive data from the emulator and reads into 
+		int seqfornow = 0;//seq num
 
-         // it from the receiver socket
+		int expecseqnum = 0;
 
-         packet packetFromEmulator = packet.receiveFrom(receiverSocket);
+		int firstrec = 0;//check whether is first arrival
 
-         
 
-         // Reads in the sequence number of the received packet
 
-         int seqNum = packetFromEmulator.getSeqNum();
+		//loop to reveive
 
-         
+		while (true) {
 
-         if (!packetFromEmulator.isEOT()) { // Received a data packet?
+			DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
 
-            // Writes the sequence number of the received packet to the arrival
+			receiveSOC.receive(receivePacket);//get the packet
 
-            // log
+			packet receivePac = packet.parseUDPdata(receivePacket.getData());
 
-            arrivalLogWriter.write(String.valueOf(seqNum));
 
-            arrivalLogWriter.newLine();
 
-         } // if
+			log.println(receivePac.getSeqNum());//get the seq num and write it in arrival.log
 
+			packet sendbackACK = null;
 
 
-         if (seqNum == expectedSeqNum) { // Expecting the sequence number of 
 
-                                         // the received packet?
+			if(receivePac.getType() == 2){//get EOT
 
-            
+				file.close();
 
-            if (packetFromEmulator.isEOT()) { // Received an EOT packet?
+				log.close();
 
-               // Creates an EOT packet with the same sequence number as the
+				sendbackACK = packet.createEOT(receivePac.getSeqNum());//sent back eot
 
-               // received packet to send to the emulator and writes it out
+				InetAddress IPAddress = InetAddress.getByName(hostname);
 
-               // to the receiver socket
+				byte sendACK[] = sendbackACK.getUDPdata();
 
-               packet packetToEmulator = packet.createEOT(expectedSeqNum);
+				DatagramPacket sendPacket = new DatagramPacket(sendACK, sendACK.length, IPAddress, udp_ack);
 
-               packetToEmulator.sendTo(emulatorAddress, emulatorPort, receiverSocket);
+            	sendSOC.send(sendPacket);
 
-               break;
+				return;
 
-            } else {
+			}
 
-               // Reads in the data of the received packet and writes it to
 
-               // the file
 
-               String data = new String(packetFromEmulator.getData());
+			if(receivePac.getSeqNum() == expecseqnum){//if receive the expected seqnum
 
-               fileWriter.write(data);
+				firstrec = 1;//to set the flag as 1 represent that we already accepy packet 0
 
+				seqfornow = receivePac.getSeqNum();
 
+				expecseqnum = (seqfornow + 1) % 32;
 
-               // Creates an ACK packet with the same sequence number as the
 
-               // received packet to send to the emulator and writes it out
 
-               // to the receiver socket
+				//if it is content, that write in file which is named filename 
 
-               packet packetToEmulator = packet.createACK(expectedSeqNum);
+				file.print(new String(receivePac.getData()));
 
-               packetToEmulator.sendTo(emulatorAddress, emulatorPort, receiverSocket);
+			}
 
+			else if(firstrec == 0){//if not yet recive packet 0 
 
+				continue;
 
-               // Computes the expected sequence number of the next packet
+			}
 
-               // to be received
+			//sendback ack
 
-               expectedSeqNum = (expectedSeqNum + 1) % packet.SEQ_NUM_MODULO;
+			sendbackACK = packet.createACK(seqfornow);
 
-            } // if
 
-         
 
-         } else {
+			InetAddress IPAddress = InetAddress.getByName(hostname);
 
-            // Computes the sequence number of the most recently received
+			byte sendACK[] = sendbackACK.getUDPdata();
 
-            // in-order packet
+			DatagramPacket sendPacket = new DatagramPacket(sendACK, sendACK.length, IPAddress, udp_ack);
 
-            int lastSeqNum = (expectedSeqNum - 1) % packet.SEQ_NUM_MODULO;
+            sendSOC.send(sendPacket);
 
-            
+		}
 
-            if (lastSeqNum < 0) { // Got a negative modulus?
 
-               // Computes a positive modulus
 
-               lastSeqNum = lastSeqNum + packet.SEQ_NUM_MODULO;
+	}
 
-            } // if
+	public static void main(String args[]) throws Exception {
 
-            
 
-            // Creates an ACK packet with the same sequence number as the most
 
-            // recently received in-order packet to send to the emulator and
 
-            // writes it out to the receiver socket
 
-            packet packetToEmulator = packet.createACK(lastSeqNum);
+		if(args.length != 4){//check the number of arguments
 
-            packetToEmulator.sendTo(emulatorAddress, emulatorPort, receiverSocket);
+			System.out.println("Please enter  <hostname for the network emulator>, <UDP port number used by the link emulator to receive ACKs from the receiver>, <UDP port number used by the receiver to receive data from the emulator>, and <name of the file into which the received data is written>inthegivenorder.");
 
-         } // if
+			return;
 
-      } // while
+		}
 
+		//store the input
 
+		hostname = args[0];
 
-      // Closes the receiver socket
+		udp_acks = args[1];
 
-      receiverSocket.close();
+		udp_datas = args[2];
 
-      
+		filename = args[3];
 
-      // Closes the arrival log writer and file writer
+		
 
-      arrivalLogWriter.close();
 
-      fileWriter.close();
 
-   } // main
+		if(!((isInteger(udp_acks)) && (isInteger(udp_datas)))){//check the req_code whether all numbers
 
+			System.out.println("Please enter an integer UDP port number");
 
+			return;
 
-   // Checks the number and formats of the command line arguments passed
+		}
 
-   private static void checkCommandLineArguments(String[] args) throws Exception {
+		udp_ack = Integer.valueOf(udp_acks);
 
-      if (args.length != 4) {
+		udp_data = Integer.valueOf(udp_datas);
 
-         System.out.println("ERROR: Expecting 4 command line arguments," +
 
-            " but got " + args.length + " arguments");
 
-         System.exit(-1);
+		doreceiver();
 
-      } // if
+	}
 
 
-
-      if ((!isValidIPAddress(args[0])) && (!isValidHostName(args[0]))) {
-
-         System.out.println("ERROR: Expecting an emulator address which is" +
-
-            " a valid IP address or host name, but got " + args[0]);
-
-         System.exit(-1);
-
-      } // if
-
-
-
-      try {
-
-         int emulatorPort = Integer.parseInt(args[1]);
-
-      } catch (NumberFormatException e) {
-
-         System.out.println("ERROR: Expecting an emulator port which is" +
-
-            " an integer, but got " + args[1]);
-
-         System.exit(-1);
-
-      } // try
-
-
-
-      try {
-
-         int senderPort = Integer.parseInt(args[2]);
-
-      } catch (NumberFormatException e) {
-
-         System.out.println("ERROR: Expecting a receiver port which is" +
-
-            " an integer, but got " + args[2]);
-
-      } // try
-
-   } // checkCommandLineArguments
-
-
-
-   // Checks if a string is a valid IP address, which ranges from 0.0.0.0 to
-
-   // 255.255.255.255
-
-   private static boolean isValidIPAddress(String string) throws Exception {
-
-      String regex = "^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
-
-      boolean isRegexMatch = string.matches(regex);
-
-      return isRegexMatch;
-
-   } // isValidIPAddress
-
-
-
-   // Checks if a string is a valid host name, which complies with RFC 1912
-
-   private static boolean isValidHostName(String string) throws Exception {
-
-      String regex = "^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])" +
-
-                     "(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9]))*$";
-
-      boolean isRegexMatch = string.matches(regex);
-
-      
-
-      boolean isCorrectLength = (string.length() <= 255);
-
-      
-
-      String[] labels = string.split("\\.");
-
-      boolean isLabelsNotAllNumeric = true;
-
-      for (String label : labels) {
-
-         if (label.matches("^[0-9]+$")) {
-
-            isLabelsNotAllNumeric = false;
-
-            break;
-
-         } // if
-
-      } // for
-
-
-
-      if (isRegexMatch && isCorrectLength && isLabelsNotAllNumeric) {
-
-         return true;
-
-      } else {
-
-         return false;
-
-      } // if
-
-   } // isValidHostName
 
 }

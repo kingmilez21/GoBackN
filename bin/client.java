@@ -1,557 +1,379 @@
-//==============================================================================
+import java.io.*; 
 
-// The Go-Back-N Protocol
+import java.net.*; 
 
-//
+import java.nio.file.Files;
 
-// @description: An implementation of a sender program in Java
+import java.nio.file.Paths;
 
-// @author: Elisha Lai
+import java.nio.file.Path;
 
-// @version: 1.0 01/11/2016
 
-//==============================================================================
 
+class sender {
 
+	//init
 
-import java.util.LinkedList;
+	static String host = null;
 
-import java.util.Iterator;
+	static String udp_acks = null;
 
+	static String udp_datas = null;
 
 
-import java.io.FileReader;
 
-import java.io.FileWriter;
+	static int udp_ack = 0;
 
-import java.io.BufferedReader;
+	static int udp_data = 0;
 
-import java.io.BufferedWriter;
 
 
+	static String filename = null;
 
-import java.net.DatagramSocket;
 
-import java.net.SocketTimeoutException;
 
+	static int totalpacs = 0;
 
 
-public class client {
 
-   public static void main(String[] args) throws Exception {
+	static int acked = 0;
 
-   // Checks the number and formats of the command line arguments passed
+	//check the string whether include letter
 
-   checkCommandLineArguments(args);
+	public static boolean isInteger( String input ){//function to check whether a string is all numbers
 
+	    try{
 
+	      Integer.parseInt(input);
 
-   String emulatorAddress = args[0];
+	      return true;
 
-   int emulatorPort = Integer.parseInt(args[1]);
+	    }
 
-   int senderPort = Integer.parseInt(args[2]);
+	    catch(Exception e){
 
-   String fileName = args[3];
+	      return false;
 
+	    }
 
+	}
 
-   // Stores the sequence number of the packet that has been previously
+	//translate the byte array to packet array
 
-   // sent but has not yet been acknowledged
+	public static packet[] transToPacket(byte[] content) throws Exception {
 
-   int base = 0;
+		totalpacs = (int)Math.ceil((double)content.length / 500.0);//total packets
 
+		int rest = 0;
 
+		rest = content.length % 500;//not the multiple of 500
 
-   // Stores the sequence number of the next packet to be sent
+		packet packets[] = new packet[totalpacs];//create packets array
 
-   int nextSeqNum = 0;
+		for (int i = 0; i < totalpacs ; ++i) {
 
+			byte change[];
 
+			if(i == totalpacs - 1 && rest != 0){//if last packet and not the multiple of 500
 
-   // Stores whether the EOT packet is sent yet 
+				change = new byte[rest];
 
-   boolean isEOTPacketSent = false;
+				System.arraycopy(content, i * 500, change, 0, rest);
 
+			}
 
+			else{
 
-   // Stores all the packets that have been previously sent but that have
+				change = new byte[500];
 
-   // not yet been acknowledged in a buffer queue
+				System.arraycopy(content, i * 500, change, 0, 500);
 
-   LinkedList<packet> unACKedPacketsSent = new LinkedList<packet>();
+			}
 
+			packets[i] = packet.createPacket(i, new String(change));
 
+		}
 
-   // Creates the file reader, sequence number log writer and ACK log
+		return packets;//retuen array of packets
 
-   // writer
+	}
 
-   BufferedReader fileReader =
 
-      new BufferedReader(new FileReader(fileName));
 
-   BufferedWriter seqNumLogWriter =
+	//send packet to reveiver with
 
-      new BufferedWriter(new FileWriter("seqnum.log"));
+	//begin: index that packet we start to send
 
-   BufferedWriter ACKLogWriter =
+	//end: index that when we stop
 
-      new BufferedWriter(new FileWriter("ack.log"));
+	//allpackets: total packets
 
+	public static void sendPac(int begin, int end, packet allpackets[], PrintWriter seqnum) throws Exception{
 
+		InetAddress IPAddress = InetAddress.getByName(host);
 
-   // Creates the sender socket
+		for (int i = begin; i < end ; ++i) {//send the packet one by one
 
-   DatagramSocket senderSocket = new DatagramSocket(senderPort);
+			byte[] sendData = allpackets[i].getUDPdata();
 
+			DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, udp_data);
 
+			DatagramSocket clientSocketUDP = new DatagramSocket();
 
-   // Creates the task to resend all packets that have been previously
+			clientSocketUDP.send(sendPacket);
 
-   // sent but have not yet been acknowledged if a timeout occurs, which
+			seqnum.println(allpackets[i].getSeqNum());//if send write the seqnum in the log
 
-   // is attached to the new timer 
+			clientSocketUDP.close();
 
-   timeouttask timeOutTask = new timeouttask(unACKedPacketsSent,
+		}
 
-      emulatorAddress, emulatorPort, senderSocket, seqNumLogWriter);
+	}
 
-   timer senderTimer = new timer(timeOutTask);
 
 
+	//reveive the ack number from reveiver
 
-   // Sends packets to the emulator until an EOT packet is received
+	public static int receiveAck(PrintWriter acklog) throws Exception{
 
-   while (true) {
+		DatagramSocket serverSocket = new DatagramSocket(udp_ack);
 
-      if (!isWindowFull(base, nextSeqNum) &&
+		serverSocket.setSoTimeout(100);//timer set as 100ms
 
-         !isEOTPacketSent) { // Is the window not full and the EOT packet
+		byte[] receiveData = new byte[1024];
 
-                             // not sent yet?
+		DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
 
-         // Stores the characters read in from the file
+		try{
 
-         char[] charsRead = new char[packet.MAX_DATA_LENGTH];
+			//try to get ack from reveiver
 
-            
+			serverSocket.receive(receivePacket);
 
-         // Stores the number of characters read in from the file
+		}
 
-         int numOfCharsRead =
+		catch(Exception e){//timeout
 
-            fileReader.read(charsRead, 0, packet.MAX_DATA_LENGTH);
+			serverSocket.close();
 
-            
+			return -1;
 
-         // Stores the packet to send to the emulator
+		}
 
-         packet packetToEmulator = null;
+		//if no timeout
 
- 
+		//get the ack number and return it
 
-         if (numOfCharsRead == -1) { // Got no more characters to read from
+		packet tempac = packet.parseUDPdata(receiveData);
 
-                                     // the file?
+		acklog.println(tempac.getSeqNum());
 
-            // Creates an EOT packet with the next sequence number to send
+		serverSocket.close();
 
-            // to the emulator
+		return tempac.getSeqNum();
 
-            packetToEmulator = packet.createEOT(nextSeqNum);
+	}
 
-   
+	
 
-            // Indicates that the EOT packet is sent
+	//help to send the EOT packet
 
-            isEOTPacketSent = true;
+	public static void sendEOT() throws Exception{
 
-         } else {
+		packet temeot = packet.createEOT(totalpacs);
 
-            // Creates a data packet with the next sequence number and the
+		InetAddress IPAddress = InetAddress.getByName(host);
 
-            // characters read in from the file to send to the emulator
+		byte[] sendData = temeot.getUDPdata();
 
-            packetToEmulator =
+		DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, udp_data);
 
-               packet.createData(nextSeqNum, new String(charsRead, 0, numOfCharsRead));
+		DatagramSocket clientSocketUDP = new DatagramSocket();
 
-         } // if
+		clientSocketUDP.send(sendPacket);
 
+	}
 
 
-         // Adds the packet to send to the emulator to the buffer queue
 
-         // for all the packets that have been previously sent but that
+	public static void main(String args[]) throws Exception {
 
-         // have not yet been acknowledged
 
-         unACKedPacketsSent.offer(packetToEmulator);
 
 
 
-         // Writes the packet to send to the emulator out to the sender
+		if(args.length != 4){//check the number of arguments
 
-         // socket
+			System.out.println("Please enter <host address of the network emulator>, <UDP port number used by the emulator to receive data from the sender>,<UDP port number used by the sender to receive ACKs from the emulator>, and <name of the file to be transferred> in the given order.");
 
-         packetToEmulator.sendTo(emulatorAddress, emulatorPort, senderSocket);
+			return;
 
+		}
 
 
-         if (base == nextSeqNum) { // Is this packet the oldest packet
 
-                                   // that has been previously sent but
+		host = args[0];
 
-                                   // has not yet been acknowledged?
+		udp_datas = args[1];
 
-            // Starts the sender timer for the oldest packet that has
+		udp_acks = args[2];
 
-            // been previously sent but has not yet been acknowledged
+		filename = args[3];
 
-            senderTimer.start(); 
+		
 
-         } // if
 
 
+		if(!((isInteger(udp_acks)) && (isInteger(udp_datas)))){//check the req_code whether all numbers
 
-         if (!packetToEmulator.isEOT()) { // Sent a data packet?
+			System.out.println("Please enter an integer UDP port number");
 
-            // Writes the sequence number of the sent packet to the sequence
+			return;
 
-            // number log
+		}
 
-            seqNumLogWriter.write(String.valueOf(nextSeqNum));
+		udp_ack = Integer.valueOf(udp_acks);
 
-            seqNumLogWriter.newLine();
+		udp_data = Integer.valueOf(udp_datas);
 
-         } // if
 
 
+		PrintWriter seqnum = new PrintWriter("seqnum.log");//creat the file name as filenmae which is the paramerter
 
-         // Computes the sequence number of the next packet to be sent
+		PrintWriter acklog = new PrintWriter("ack.log");//creat the file arrival.log to save the seqNUM
 
-         nextSeqNum = (nextSeqNum + 1) % packet.SEQ_NUM_MODULO;
 
-      } else {
 
-         // Creates a packet to receive data from the emulator and reads 
+		byte[] content = Files.readAllBytes(new File(filename).toPath());
 
-         // into it from the sender socket
 
-         packet packetFromEmulator = packet.receiveFrom(senderSocket);
 
+		packet allpackets[] = transToPacket(content);
 
 
-         // Reads in the sequence number of the received packet
 
-         int seqNum = packetFromEmulator.getSeqNum();
+		int begin = 0;
 
 
 
-         if (!packetFromEmulator.isEOT()) { // Received an ACK packet?
+		boolean first = false;//to check whether is first run the loop below
 
-            // Writes the sequence number of the received packet to the ACK
 
-            // log 
 
-            ACKLogWriter.write(String.valueOf(seqNum));
+		int end = 10;
 
-            ACKLogWriter.newLine();
 
-         } // if
 
+		while(begin < totalpacs){
 
+			if(totalpacs < 10){
 
-         // Computes the sequence number of the packet that has been
+				end = totalpacs;
 
-         // previously sent but has not yet been acknowledged
+			}
 
-         base = (seqNum + 1) % packet.SEQ_NUM_MODULO;
+			else{
 
+				if(10 + begin > totalpacs){
 
+					end = totalpacs;
 
-         // Removes all the acknowledged packets sent to the emulator
+				}
 
-         // from the buffer queue storing all the packets that has been
+				else{
 
-         // previously sent but that have not yet been acknowledged
+					end = 10 + begin;
 
-         removeACKedPacketsSent(unACKedPacketsSent, base);
+				}
 
+			}
 
+			sendPac(begin, end, allpackets, seqnum);
 
-         if (base == nextSeqNum) { // Got no more packets that have been
+			int recresult = 0;
 
-                                   // previously sent but that have not
+			int c = 0;
 
-                                   // yet been acknowledged?
+			do{
 
-            // Stops the sender timer since all the packets that have
+				recresult = receiveAck(acklog);
 
-            // been previously sent have been acknowledged
+				if(recresult == -1){
 
-            senderTimer.stop();
+					if(!first){//if not ack packet 0
 
-                              
+						break;
 
-            if (packetFromEmulator.isEOT()) { // Received an EOT packet?
+					}else{//set begin as the last acked + 1
 
-               break;
+						begin = acked + 1;
 
-            } // if
+						break;
 
-         } else {
+					}
 
-            // Restarts the sender timer for the oldest packet that has
+				}
 
-            // been previously sent but that has not yet been acknowledged
+				else{
 
-            senderTimer.restart();
+					first = true;
 
-         } // if
+					acked = recresult;
 
-      } // if
+				}
 
-   } // while
+				c = recresult;
 
+				int x = begin / 32;//
 
+				if (begin % 32 >= 23){
 
-   // Closes the sender socket
+					if (recresult <= 8){
 
-   senderSocket.close();
+						c = recresult + 32 * (x + 1);
 
-      
+					} 
 
-   // Closes the ACK log writer, sequence number log writer and file
+					else{
 
-   // reader
+						c = recresult + 32 * x;
 
-   ACKLogWriter.close();
+					}
 
-   seqNumLogWriter.close();
+				} 
 
-   fileReader.close();
+				else{
 
-   } // main
+					c = recresult + 32 * x;
 
+				}
 
+				acked = c;
 
-   // Checks the number and formats of the command line arguments passed
+				//System.out.println("begin:    "  + begin);
 
-   private static void checkCommandLineArguments(String[] args) throws Exception {
+				begin +=1;
 
-      if (args.length != 4) {
+				//System.out.println("totalpacs:    "  + totalpacs);
 
-         System.out.println("ERROR: Expecting 4 command line arguments," +
+				//System.out.println("x:    "  + x);
 
-            " but got " + args.length + " arguments");
+				//System.out.println("c:    "  + c);
 
-         System.exit(-1);
+				//System.out.println("end:    "  + end);
 
-      } // if
+				//System.out.println("    ");
 
+			}while(c < end);
 
+		}
 
-      if ((!isValidIPAddress(args[0])) && (!isValidHostName(args[0]))) {
+		sendEOT();
 
-         System.out.println("ERROR: Expecting an emulator address which is" +
+		seqnum.close();
 
-            " a valid IP address or host name, but got " + args[0]);
+		acklog.close();
 
-         System.exit(-1);
-
-      } // if
-
-
-
-      try {
-
-         int emulatorPort = Integer.parseInt(args[1]);
-
-      } catch (NumberFormatException e) {
-
-         System.out.println("ERROR: Expecting an emulator port which is" +
-
-            " an integer, but got " + args[1]);
-
-         System.exit(-1);
-
-      } // try
-
-
-
-      try {
-
-         int senderPort = Integer.parseInt(args[2]);
-
-      } catch (NumberFormatException e) {
-
-         System.out.println("ERROR: Expecting a sender port which is" +
-
-            " an integer, but got " + args[2]);
-
-      } // try
-
-   } // checkCommandLineArguments
-
-
-
-   // Checks if a string is a valid IP address, which ranges from 0.0.0.0 to
-
-   // 255.255.255.255
-
-   private static boolean isValidIPAddress(String string) throws Exception {
-
-      String regex = "^(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\." +
-
-                     "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$";
-
-      boolean isRegexMatch = string.matches(regex);
-
-      return isRegexMatch;
-
-   } // isValidIPAddress
-
-
-
-   // Checks if a string is a valid host name, which complies with RFC 1912
-
-   private static boolean isValidHostName(String string) throws Exception {
-
-      String regex = "^([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9])" +
-
-                     "(\\.([a-zA-Z0-9]|[a-zA-Z0-9][a-zA-Z0-9\\-]{0,61}[a-zA-Z0-9]))*$";
-
-      boolean isRegexMatch = string.matches(regex);
-
-      
-
-      boolean isCorrectLength = (string.length() <= 255);
-
-      
-
-      String[] labels = string.split("\\.");
-
-      boolean isLabelsNotAllNumeric = true;
-
-      for (String label : labels) {
-
-         if (label.matches("^[0-9]+$")) {
-
-            isLabelsNotAllNumeric = false;
-
-            break;
-
-         } // if
-
-      } // for
-
-
-
-      if (isRegexMatch && isCorrectLength && isLabelsNotAllNumeric) {
-
-         return true;
-
-      } else {
-
-         return false;
-
-      } // if
-
-   } // isValidHostName
-
-
-
-   // Checks if the window is full, that is, whether there are ten
-
-   // outstanding, unacknowledged packets
-
-   private static boolean isWindowFull(int base, int nextSeqNum) {
-
-      final int WINDOW_SIZE = 10;
-
-      if ((base + WINDOW_SIZE) >= packet.SEQ_NUM_MODULO) {
-
-         
-
-         if ((nextSeqNum >= base) && (nextSeqNum < packet.SEQ_NUM_MODULO)) {
-
-            return false;
-
-         } else if ((nextSeqNum >= 0) &&
-
-            (nextSeqNum < ((base + WINDOW_SIZE) % packet.SEQ_NUM_MODULO))) {
-
-            return false;
-
-         } else {
-
-            return true;
-
-         } // if
-
-      
-
-      } else {
-
-         
-
-         if ((nextSeqNum >= base) && (nextSeqNum < (base + WINDOW_SIZE))) {
-
-            return false;
-
-         } else {
-
-            return true;
-
-         } // if
-
-      
-
-      } // if
-
-   } // isWindowFull
-
-
-
-   // Removes all the acknowledged packets sent to the emulator from the
-
-   // buffer queue storing all the packets that has been previously sent
-
-   // but that have not yet been acknowledged
-
-   private static void removeACKedPacketsSent(LinkedList<packet> unACKedPacketsSent,
-
-      int base) {
-
-      Iterator<packet> it = unACKedPacketsSent.iterator();
-
-      
-
-      while (it.hasNext()) {
-
-         packet packetToEmulator = it.next();
-
-         
-
-         if (packetToEmulator.getSeqNum() == base) {
-
-            break;
-
-         } else {
-
-            it.remove();
-
-         } // if
-
-      } // while
-
-   } // removeACKedPacketsSent
+	}
 
 }
