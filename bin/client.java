@@ -1,419 +1,557 @@
-import java.io.*; 
+//package senderFiles;
 
-import java.net.*; 
 
-import java.nio.file.Files;
 
-import java.nio.file.Paths;
+import java.io.*;
 
-import com.ibm.rmi.util.buffer.ByteBuffer;
+import java.net.*;
 
-import java.nio.file.Path;
+import java.net.DatagramPacket;
 
+import java.net.DatagramSocket;
 
+import java.net.InetAddress;
 
-class client {
+import java.util.ArrayList;
 
-	//init
+import java.util.LinkedList;
 
-	static String host = null;
+import java.util.Queue;
 
-	static String udp_acks = null;
+import java.util.List;
 
-	static String udp_datas = null;
+//import senderFiles.*;
 
 
 
-	static int udp_ack = 0;
+public class client {
 
-	static int udp_data = 0;
+	DatagramSocket clientSocket;
 
-	private final int maxDataLength = 500;
+	int networkDataRecievePort;
 
-	private final int SeqNumModulo = 32;
+	InetAddress networkEmuIPAddress;  //Name of the machine hosting the server
 
-	static String filename = null;
+	String filename;
 
+	int ACKSize;
 
+	int expectedSeqnum = 0;
 
-	static int totalpacs = 0;
+	long timerStart;
 
+	long estimatedTime;
 
+	boolean EOFReceived = false;
 
-	static int acked = 0;
+	Writer seqnumWriter;// = new PrintWriter("seqnum.log","UTF-8");
 
-	public byte[] getUDPdata() {
+	Writer ackWriter;// = new PrintWriter("ack.log","UTF-8");
 
-		ByteBuffer buffer = ByteBuffer.allocate(512);
+	Queue<packet> windowQueue = new LinkedList<packet>();
 
-		buffer.putInt(packet.type);
+	Queue<packet> allPackets = new LinkedList<packet>();
 
-        buffer.putInt(seqnum);
+	//int seqnum;
 
-        buffer.putInt(data.length());
+	//constructor
 
-        buffer.put(data.getBytes(),0,data.length());
+	client(String networkEmuAddress, String networkDataRecievePort, String senderACKRecievePort, String filename){
 
-		return buffer.array();
-
-	}
-
-	
-
-	public static packet parseUDPdata(byte[] UDPdata) throws Exception {
-
-		ByteBuffer buffer = ByteBuffer.wrap(UDPdata);
-
-		int type = buffer.getInt();
-
-		int seqnum = buffer.getInt();
-
-		int length = buffer.getInt();
-
-		byte data[] = new byte[length];
-
-		buffer.get(data, 0, length);
-
-		return new packet(type, seqnum, new String(data));
-
-	}
-
-	//check the string whether include letter
-
-	public static boolean isInteger( String input ){//function to check whether a string is all numbers
-
-	    try{
-
-	      Integer.parseInt(input);
-
-	      return true;
-
-	    }
-
-	    catch(Exception e){
-
-	      return false;
-
-	    }
-
-	}
-
-	//translate the byte array to packet array
-
-	public static packet[] transToPacket(byte[] content) throws Exception {
-
-		totalpacs = (int)Math.ceil((double)content.length / 500.0);//total packets
-
-		int rest = 0;
-
-		rest = content.length % 500;//not the multiple of 500
-
-		packet packets[] = new packet[totalpacs];//create packets array
-
-		for (int i = 0; i < totalpacs ; ++i) {
-
-			byte change[];
-
-			if(i == totalpacs - 1 && rest != 0){//if last packet and not the multiple of 500
-
-				change = new byte[rest];
-
-				System.arraycopy(content, i * 500, change, 0, rest);
-
-			}
-
-			else{
-
-				change = new byte[500];
-
-				System.arraycopy(content, i * 500, change, 0, 500);
-
-			}
-
-			packets[i] = packet.createPacket(i, new String(change));
-
-		}
-
-		return packets;//retuen array of packets
-
-	}
-
-
-
-	//send packet to reveiver with
-
-	//begin: index that packet we start to send
-
-	//end: index that when we stop
-
-	//allpackets: total packets
-
-	public static void sendPac(int begin, int end, packet allpackets[], PrintWriter seqnum) throws Exception{
-
-		InetAddress IPAddress = InetAddress.getByName(host);
-
-		for (int i = begin; i < end ; ++i) {//send the packet one by one
-
-			byte[] sendData = allpackets[i].getUDPdata();
-
-			DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, udp_data);
-
-			DatagramSocket clientSocketUDP = new DatagramSocket();
-
-			clientSocketUDP.send(sendPacket);
-
-			seqnum.println(allpackets[i].getSeqNum());//if send write the seqnum in the log
-
-			clientSocketUDP.close();
-
-		}
-
-	}
-
-
-
-	//reveive the ack number from reveiver
-
-	public static int receiveAck(PrintWriter acklog) throws Exception{
-
-		DatagramSocket serverSocket = new DatagramSocket(udp_ack);
-
-		serverSocket.setSoTimeout(100);//timer set as 100ms
-
-		byte[] receiveData = new byte[1024];
-
-		DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+		//must throw incase the program found an exception
 
 		try{
 
-			//try to get ack from reveiver
+		this.clientSocket = new DatagramSocket(Integer.parseInt(senderACKRecievePort));
 
-			serverSocket.receive(receivePacket);
+		this.networkDataRecievePort = Integer.parseInt(networkDataRecievePort);
+
+		this.networkEmuIPAddress = InetAddress.getByName(networkEmuAddress);
+
+		this.filename = filename;
+
+		this.ACKSize = packet.createACK(0).getUDPdata().length;
+
+		//System.out.print ("" + networkEmuAddress + " " + networkDataRecievePort + " " + senderACKRecievePort + " " + filename);
+
+		}catch(Exception e){
+
+			//System.out.print("1");
+
+			//return null;
 
 		}
-
-		catch(Exception e){//timeout
-
-			serverSocket.close();
-
-			return -1;
-
-		}
-
-		//if no timeout
-
-		//get the ack number and return it
-
-		packet tempac = packet.parseUDPdata(receiveData);
-
-		acklog.println(tempac.getSeqNum());
-
-		serverSocket.close();
-
-		return tempac.getSeqNum();
 
 	}
 
 	
 
-	//help to send the EOT packet
+	public void dataToPackets(String filename) throws Exception{
 
-	public static void sendEOT() throws Exception{
+		int seqnum = 0;
 
-		packet temeot = packet.createEOT(totalpacs);
+		int inputChar;
 
-		InetAddress IPAddress = InetAddress.getByName(host);
+		int charsRead = 0;
 
-		byte[] sendData = temeot.getUDPdata();
+		String data = "";
 
-		DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, IPAddress, udp_data);
+		BufferedReader inFromUser = new BufferedReader(new FileReader(filename));
 
-		DatagramSocket clientSocketUDP = new DatagramSocket();
+		while((inputChar = inFromUser.read()) != -1){
 
-		clientSocketUDP.send(sendPacket);
+			//System.out.print("sup");
+
+			if(charsRead == 500){
+
+				
+
+				//System.out.print("making packet with " + data + "\n");
+
+				packet addedPacket = packet.createPacket(seqnum, data);
+
+				allPackets.add(addedPacket);
+
+				//System.out.print(addedPacket.getSeqNum() + "\n");
+
+				charsRead = 0;
+
+				data = "";	
+
+				//seqnum = (seqnum + 1) % 32;
+
+				seqnum++;
+
+			}
+
+			char c = (char) inputChar;
+
+			data = data + c;
+
+			//allPackets.add(packet(seqnum, data));
+
+			//seqnum++;
+
+			charsRead++;
+
+		}
+
+		//leftover data
+
+		if(data.length() > 0){
+
+			//System.out.print("making packet with " + data + "\n");
+
+			//packet addedPacket = packet.createPacket(seqnum, data);
+
+			allPackets.add(packet.createPacket(seqnum, data));
+
+			//System.out.print(addedPacket.getSeqNum() + "\n");
+
+			
+
+		}
+
+	}
+
+	
+
+	public void fillWindow() throws Exception{
+
+		while(allPackets.size() > 0 && windowQueue.size() < 10){
+
+			windowQueue.add(allPackets.poll());
+
+			//System.out.print(windowQueue.peek().getData() + "\n");
+
+		}
 
 	}
 
 
 
-	public static void main(String args[]) throws Exception {
+	public void transmit(String filename) throws Exception{
 
+		//byte[] senderData;
 
+		/*
 
+		int seqnum = 0;
 
+		BufferedReader inFromUser = new BufferedReader(new FileReader(filename));
 
-		if(args.length != 4){//check the number of arguments
+		//System.out.print(inFromUser);
 
-			System.out.println("Please enter <host address of the network emulator>, <UDP port number used by the emulator to receive data from the sender>,<UDP port number used by the sender to receive ACKs from the emulator>, and <name of the file to be transferred> in the given order.");
+		String data = "";
 
-			return;
+		int inputChar;
+
+		byte[] senderData;
+
+		//MAX data length is 500
+
+		while ((inputChar = inFromUser.read()) != -1) {
+
+        		seqnum = (seqnum + 1) % 32;
+
+			char c = (char) inputChar;
+
+			data += inputChar;
+
+			System.out.println(c);
+
+			//packet.createPacket(seqnum, line);
 
 		}
 
+		*/
 
+		//dataToPackets(filename);
 
-		host = args[0];
+		fillWindow();
 
-		udp_datas = args[1];
+		//System.out.println("transmit function");
 
-		udp_acks = args[2];
+		for(packet windowPacket : this.windowQueue){
 
-		filename = args[3];
+			//packet sentPacket = packet.createPacket(seqnum, data);
+
+			System.out.print("Sending packet with seqnum: " + windowPacket.getSeqNum() + "\n");
+
+			seqnumWriter.write(windowPacket.getSeqNum() + "\n");
+
+			//System.out.println(packet);
+
+			byte[] senderData = windowPacket.getUDPdata();
+
+			DatagramPacket sendPacket = new DatagramPacket(senderData, senderData.length, this.networkEmuIPAddress, this.networkDataRecievePort);
+
+			clientSocket.send(sendPacket);
+
+			timerStart = System.currentTimeMillis();
+
+		}
+
+		//ACKlisten();
+
+		//Wait for ACKs until EOF ACK is receieved
 
 		
 
+		/*
+
+		byte[] senderData = windowQueue.poll().getUDPdata();
+
+		DatagramPacket sendPacket = new DatagramPacket(senderData, senderData.length, networkEmuIPAddress, networkDataRecievePort);
+
+                clientSocket.send(sendPacket);
+
+		*/
+
+	}	
+
+	
+
+	public void sendSingle(packet p) throws Exception{
+
+		byte[] senderData = p.getUDPdata();
+
+                DatagramPacket sendPacket = new DatagramPacket(senderData, senderData.length, this.networkEmuIPAddress, this.networkDataRecievePort);
+
+                //System.out.println("sending single packet with seqnum " + p.getSeqNum());
+
+		//seqnumWriter.write("test2");
+
+		clientSocket.send(sendPacket);
+
+		timerStart = System.currentTimeMillis();
+
+	}
+
+	
+
+	void endTransmission() throws Exception{
+
+		packet EOTPacket = packet.createEOT(0);
+
+		sendSingle(EOTPacket);
+
+		System.out.println("Done!");
+
+		return;
+
+	}
 
 
-		if(!((isInteger(udp_acks)) && (isInteger(udp_datas)))){//check the req_code whether all numbers
 
-			System.out.println("Please enter an integer UDP port number");
+	void slideWindow(int ack){
 
-			return;
+		//System.out.println("slinding window because we got ack " + ack);
+
+		while((windowQueue.peek().getSeqNum() != ack)){
+
+			windowQueue.poll();
+
+			//System.out.println("sup1");
+
+		}	
+
+		if(windowQueue.peek() != null){
+
+			//System.out.println("sup2");
+
+			windowQueue.poll();
+
+			//System.out.println("sup3");
 
 		}
 
-		udp_ack = Integer.valueOf(udp_acks);
+		
 
-		udp_data = Integer.valueOf(udp_datas);
+		//System.out.println("sup4");
 
+	}
 
+	int getIndex(int item){
 
-		PrintWriter seqnum = new PrintWriter("seqnum.log");//creat the file name as filenmae which is the paramerter
+		int i = 0;
 
-		PrintWriter acklog = new PrintWriter("ack.log");//creat the file arrival.log to save the seqNUM
+		//Queue<packet> clonePackets = new LinkedList<packet>(windowQueue);
 
+		List<packet> l = new ArrayList<packet>(windowQueue);
 
+		for (i = l.size()-1; i > 0; i--) {
 
-		byte[] content = Files.readAllBytes(new File(filename).toPath());
+                
 
+			if(l.get(i).getSeqNum() == item){
 
-
-		packet allpackets[] = transToPacket(content);
-
-
-
-		int begin = 0;
-
-
-
-		boolean first = false;//to check whether is first run the loop below
-
-
-
-		int end = 10;
-
-
-
-		while(begin < totalpacs){
-
-			if(totalpacs < 10){
-
-				end = totalpacs;
+				return i;
 
 			}
+
+			//System.out.println(linkedList.get(i));
+
+            	}
+
+		return i;
+
+	}
+
+	void ACKlisten() throws Exception{
+
+		
+
+                int packetSize = packet.createPacket(0, new String( new char[500]) ).getUDPdata().length;
+
+               	byte[] ACKdata = new byte[packetSize];
+
+                DatagramPacket ACKDatagram = new DatagramPacket(ACKdata, packetSize);
+
+                clientSocket.setSoTimeout(1000);
+
+		//timer expires?
+
+		while((System.currentTimeMillis() - timerStart) < 1000){
+
+			try {//
+
+			estimatedTime = System.currentTimeMillis() - timerStart;
+
+		       	///System.out.println("first "+ estimatedTime);
+
+			clientSocket.receive(ACKDatagram);
+
+			//System.out.println("second "+ estimatedTime);
+
+			//receiverSocket.receive(receiverPacketDatagram);
+
+                        packet ACKPacket = packet.parseUDPdata(ACKDatagram.getData());
+
+                	System.out.println("Received ACK: " + ACKPacket.getSeqNum());
+
+			if(ACKPacket.getSeqNum() > -1)
+
+			ackWriter.write(ACKPacket.getSeqNum() + "\n");
+
+			if((windowQueue.peek() == null) && (allPackets.peek() == null)){
+
+                                //System.out.println("no more in windowQueue or allPackets");
+
+                                break;
+
+                        }
+
+			if(getIndex(windowQueue.peek().getSeqNum()) < getIndex(ACKPacket.getSeqNum())){
+
+			//if(getIndex(windowQueue.peek().getSeqNum()) < getIndex(ACKPacket.getSeqNum())){
+
+				slideWindow(ACKPacket.getSeqNum());
+
+			}
+
+			//if(windowQueue.peek() == null){
+
+			if((windowQueue.peek() == null) && (allPackets.peek() == null)){
+
+				//System.out.println("no more in windowQueue or allPackets");
+
+				break;
+
+			}
+
+			//System.out.println("sup5");
+
+			//if((s.windowQueue.peek() == null) && (s.allPackets.peek() == null)){
+
+			if((windowQueue.peek().getSeqNum() == ACKPacket.getSeqNum())){
+
+				//if(allPackets.peek() != null){
+
+				//System.out.println("sliding window");
+
+				expectedSeqnum++;
+
+				windowQueue.poll();
+
+				/*
+
+				//allPackets.poll();
+
+				//if(allPackets.peek() != null){
+
+					packet nextToSend = allPackets.peek();
+
+					//fillWindow();
+
+					System.out.println("sliding window to: " + windowQueue.peek().getSeqNum());
+
+					System.out.println("hello");
+
+					if(nextToSend != null){
+
+						sendSingle(nextToSend);
+
+					}
+
+					System.out.println("world");
+
+					//timerStart = System.currentTimeMillis();
+
+				//}
+
+				if((allPackets.peek() == null) && (windowQueue.peek() == null)){
+
+					endTransmission();
+
+				}
+
+				*/
+
+				
+
+			}
+
+			else if(ACKPacket.getType() == 2){
+
+				System.exit(0);
+
+			}
+
+			/*
 
 			else{
 
-				if(10 + begin > totalpacs){
+				System.out.println("resending packets in window due to repeat ACK recieved");
 
-					end = totalpacs;
+				break;
 
-				}
-
-				else{
-
-					end = 10 + begin;
-
-				}
+				//transmit(filename);
 
 			}
 
-			sendPac(begin, end, allpackets, seqnum);
+			*/
 
-			int recresult = 0;
+			}
 
-			int c = 0;
+			catch (SocketTimeoutException e1) {
 
-			do{
+				//System.out.println("Hello");
 
-				recresult = receiveAck(acklog);
-
-				if(recresult == -1){
-
-					if(!first){//if not ack packet 0
-
-						break;
-
-					}else{//set begin as the last acked + 1
-
-						begin = acked + 1;
-
-						break;
-
-					}
-
-				}
-
-				else{
-
-					first = true;
-
-					acked = recresult;
-
-				}
-
-				c = recresult;
-
-				int x = begin / 32;//
-
-				if (begin % 32 >= 23){
-
-					if (recresult <= 8){
-
-						c = recresult + 32 * (x + 1);
-
-					} 
-
-					else{
-
-						c = recresult + 32 * x;
-
-					}
-
-				} 
-
-				else{
-
-					c = recresult + 32 * x;
-
-				}
-
-				acked = c;
-
-				//System.out.println("begin:    "  + begin);
-
-				begin +=1;
-
-				//System.out.println("totalpacs:    "  + totalpacs);
-
-				//System.out.println("x:    "  + x);
-
-				//System.out.println("c:    "  + c);
-
-				//System.out.println("end:    "  + end);
-
-				//System.out.println("    ");
-
-			}while(c < end);
+			}
 
 		}
 
-		sendEOT();
-
-		seqnum.close();
-
-		acklog.close();
+		//System.out.println("over 5000!");
 
 	}
+
+	
+
+	public static void main(String [ ] args) {
+
+		//Check if input is correct
+
+		//seqnumWriter = new PrintWriter("seqnum.log","UTF-8");
+
+        	//ackWriter = new PrintWriter("ack.log","UTF-8");
+
+		if( args.length != 4) {
+
+			System.err.println("Usage:\n\tsender \t<host address of the network emulator>\n" +
+
+					"\t\t<UDP port number used by the emulator to receive data from the sender>\n" +
+
+					"\t\t<UDP port number used by the sender to receive ACKs from the emulator>\n" +
+
+					"\t\t<name of the file to be transferred>\n");
+
+			System.exit(1);
+
+		}
+
+		//Make sender object
+
+		client s = new client(args[0],args[1],args[2],args[3]);
+
+		try{
+
+		s.seqnumWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream("seqnum.log"), "utf-8"));
+
+		s.ackWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream("ack.log"), "utf-8"));
+
+		//s.seqnumWriter.write("test2");
+
+		
+
+		s.dataToPackets(args[3]);
+
+                s.fillWindow();
+
+                //ACKlisten();
+
+		while(!((s.windowQueue.peek() == null) && (s.allPackets.peek() == null))){
+
+			s.transmit(args[3]);
+
+			s.ACKlisten();
+
+		}
+
+		s.endTransmission();
+
+		} catch(Exception e) {
+
+			System.err.println("Whoops! Something unexepceted happened. Please try again! :)");
+
+		}finally {
+
+  	 	try {s.seqnumWriter.close();s.ackWriter.close();} catch (Exception ex) {}
+
+		}
+
+	}
+
+
 
 }

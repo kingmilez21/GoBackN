@@ -1,158 +1,162 @@
-import java.io.*; 
+import java.io.*;
 
-import java.net.*; 
+import java.net.*;
 
-class server {
+import java.net.DatagramPacket;
 
+import java.net.DatagramSocket;
 
+import java.net.InetAddress;
 
-	//init
+import java.util.LinkedList;
 
-	static String hostname = null;
-
-	static String udp_acks = null;
-
-	static String udp_datas = null;
+import java.util.Queue;
 
 
 
-	static int udp_ack = 0;
+public class server{
 
-	static int udp_data = 0;
+	InetAddress networkEmuHostname;
 
+	int networkEmuPort;
 
+	int receiverPort;
 
-	static String filename = null;
+	String filename;
 
+	DatagramSocket receiverSocket;
 
+	int expectedSeqnum;
 
-	//check the string whether include letter
+	int lastReceived = -1;
 
-	public static boolean isInteger( String input ){//function to check whether a string is all numbers
+	Writer arrivalWriter;
 
-	    try{
+	Writer fileWriter;
 
-	      Integer.parseInt(input);
+	Queue<packet> receivedPackets = new LinkedList<packet>();
 
-	      return true;
+	//PrintWriter writer = new PrintWriter("");
 
-	    }
+	//constrctor
 
-	    catch(Exception e){
+	server(String networkHostname, int networkEmuPort, int receiverPort, String filename){
 
-	      return false;
+		//must be thrown
 
-	    }
+		try{
+
+		this.networkEmuHostname = InetAddress.getByName(networkHostname);
+
+		this.receiverSocket = new DatagramSocket(receiverPort);
+
+		} catch (Exception e){
+
+			System.err.println(e.getMessage());
+
+		}
+
+		this.networkEmuPort = networkEmuPort;
+
+		this.receiverPort = receiverPort;
+
+		this.filename = filename;
+
+		//System.out.print(networkHostname + " " + networkEmuPort + " " + receiverPort + " " + filename + "\n");
+
+		
 
 	}
 
-	//receive
-
-	public static void doreceiver() throws Exception {
 
 
+	public void receive(String filename) throws Exception {
 
-		//socket and datagram init
+		//int packetSize = packet.createPacket(0, new String( new char[500]) ).getUDPdata().length;
 
-		byte[] receiveData = new byte[1024];//buffer recived data
+		byte[] ACKdata = new byte[packet.createACK(0).getUDPdata().length];
 
-	
+		DatagramPacket receiverPacketDatagram = new DatagramPacket(ACKdata, packet.createACK(0).getUDPdata().length);
 
-		DatagramSocket sendSOC = new DatagramSocket();//send ack socket
+		//receiverSocket.setSoTimeout(1000);
 
-		DatagramSocket receiveSOC = new DatagramSocket(udp_data);//receive data socket
+		while(true){
 
+			//System.out.print("hello");
 
+			receiverSocket.receive(receiverPacketDatagram);
 
-		PrintWriter file = new PrintWriter(filename);//creat the file name as filenmae which is the paramerter
+			packet receiverPacket = packet.parseUDPdata(receiverPacketDatagram.getData());
 
-		PrintWriter log = new PrintWriter("arrival.log");//creat the file arrival.log to save the seqNUM
+			System.out.println("Received packet with seqnum: " + receiverPacket.getSeqNum());
 
+			arrivalWriter.write(receiverPacket.getSeqNum() + "\n");
 
+			//System.out.print(expectedSeqnum);
 
-		int seqfornow = 0;//seq num
+			if(receiverPacket.getSeqNum() == expectedSeqnum){
 
-		int expecseqnum = 0;
+				//System.out.println("received expected seqnum " + receiverPacket.getSeqNum());
 
-		int firstrec = 0;//check whether is first arrival
+				lastReceived = receiverPacket.getSeqNum();
 
+				packet ACK = packet.createACK(receiverPacket.getSeqNum());
 
+				byte[] sendData = ACK.getUDPdata();
 
-		//loop to reveive
+				DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, networkEmuHostname, networkEmuPort);
 
-		while (true) {
+				receiverSocket.send(sendPacket);
 
-			DatagramPacket receivePacket = new DatagramPacket(receiveData, receiveData.length);
+				receivedPackets.add(receiverPacket);
 
-			receiveSOC.receive(receivePacket);//get the packet
+				System.out.println("Sending ACK: " + receiverPacket.getSeqNum());
 
-			packet receivePac = packet.parseUDPdata(receivePacket.getData());
+				expectedSeqnum = (expectedSeqnum + 1) % 32;
 
+			}
 
+			else if((receiverPacket.getType() == 2)){
 
-			log.println(receivePac.getSeqNum());//get the seq num and write it in arrival.log
+				//packet EOTPacket = packet.createACK(lastReceived);
 
-			packet sendbackACK = null;
+                                byte[] sendData = receiverPacket.getUDPdata();
 
+                                DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, networkEmuHostname, networkEmuPort);
 
+				receiverSocket.send(sendPacket);
 
-			if(receivePac.getType() == 2){//get EOT
-
-				file.close();
-
-				log.close();
-
-				sendbackACK = packet.createEOT(receivePac.getSeqNum());//sent back eot
-
-				InetAddress IPAddress = InetAddress.getByName(hostname);
-
-				byte sendACK[] = sendbackACK.getUDPdata();
-
-				DatagramPacket sendPacket = new DatagramPacket(sendACK, sendACK.length, IPAddress, udp_ack);
-
-            	sendSOC.send(sendPacket);
+				//System.out.println("sent EOT packet back");
 
 				return;
 
 			}
 
+			else{
 
+				//System.out.println("expected " + expectedSeqnum + "but got " + receiverPacket.getSeqNum());
 
-			if(receivePac.getSeqNum() == expecseqnum){//if receive the expected seqnum
+				packet ACK = packet.createACK(lastReceived);
 
-				firstrec = 1;//to set the flag as 1 represent that we already accepy packet 0
+                                byte[] sendData = ACK.getUDPdata();
 
-				seqfornow = receivePac.getSeqNum();
+                                DatagramPacket sendPacket = new DatagramPacket(sendData, sendData.length, networkEmuHostname, networkEmuPort);
 
-				expecseqnum = (seqfornow + 1) % 32;
+                                receiverSocket.send(sendPacket);
 
+                                //System.out.println("send ack: " + lastReceived);
 
-
-				//if it is content, that write in file which is named filename 
-
-				file.print(new String(receivePac.getData()));
-
-			}
-
-			else if(firstrec == 0){//if not yet recive packet 0 
-
-				continue;
+                                //expectedSeqnum++;
 
 			}
 
-			//sendback ack
+			
 
-			sendbackACK = packet.createACK(seqfornow);
+			
 
+			//expectedSeqnum++;
 
-
-			InetAddress IPAddress = InetAddress.getByName(hostname);
-
-			byte sendACK[] = sendbackACK.getUDPdata();
-
-			DatagramPacket sendPacket = new DatagramPacket(sendACK, sendACK.length, IPAddress, udp_ack);
-
-            sendSOC.send(sendPacket);
+			//System.out.print("hello");
 
 		}
 
@@ -160,49 +164,65 @@ class server {
 
 	}
 
-	public static void main(String args[]) throws Exception {
+	
 
+	void writeToFile(String filename) throws Exception{
 
+		for (packet receivedPacket : receivedPackets){
 
+			String s = new String(receivedPacket.getData());
 
-
-		if(args.length != 4){//check the number of arguments
-
-			System.out.println("Please enter  <hostname for the network emulator>, <UDP port number used by the link emulator to receive ACKs from the receiver>, <UDP port number used by the receiver to receive data from the emulator>, and <name of the file into which the received data is written>inthegivenorder.");
-
-			return;
+			fileWriter.write(s);
 
 		}
 
-		//store the input
+	}
 
-		hostname = args[0];
+	public static void main(String[] args){
 
-		udp_acks = args[1];
+		if(args.length != 4){
 
-		udp_datas = args[2];
+			System.err.println("Usage:\n\tsender \t<host address of the network emulator>\n" +
 
-		filename = args[3];
+					"\t\t<UDP port number used by the emulator to receive data from the sender>\n" +
+
+					"\t\t<UDP port number used by the sender to receive ACKs from the emulator>\n" +
+
+			"\t\t<name of the file to be transferred>\n");
+
+			System.exit(1);
+
+		}
+
+		server r = new server(args[0], Integer.parseInt(args[1]), Integer.parseInt(args[2]), args[3]);
+
+		try{
+
+			//arrivalWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream("arrival.log"), "utf-8"));
 
 		
 
+			//receiver r = new receiver(args[0], Integer.parseInt(args[1]), Integer.parseInt(args[2]), args[3]);
 
+			r.arrivalWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream("arrival.log"), "utf-8"));
 
-		if(!((isInteger(udp_acks)) && (isInteger(udp_datas)))){//check the req_code whether all numbers
+			r.fileWriter = new BufferedWriter(new OutputStreamWriter(new FileOutputStream(args[3]), "utf-8"));
 
-			System.out.println("Please enter an integer UDP port number");
+			r.receive(args[3]);
 
-			return;
+			r.writeToFile(args[3]);
+
+		}catch (Exception e){
+
+			System.err.print(e.getMessage());
+
+	
+
+		}finally {
+
+   		try {r.arrivalWriter.close(); r.fileWriter.close();} catch (Exception ex) {}
 
 		}
-
-		udp_ack = Integer.valueOf(udp_acks);
-
-		udp_data = Integer.valueOf(udp_datas);
-
-
-
-		doreceiver();
 
 	}
 
